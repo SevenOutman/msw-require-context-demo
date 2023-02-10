@@ -1,37 +1,35 @@
 // src/mocks/handlers.js
 import { rest } from "msw";
 
-export const handlers = [
-  rest.post("/api/login", (req, res, ctx) => {
-    // Persist user's authentication in the session
-    sessionStorage.setItem("is-authenticated", "true");
+// recursively require every .js file under ./api folder
+const requireMockHandler = require.context("./api", true, /\.js$/);
 
-    return res(
-      // Respond with a 200 status code
-      ctx.status(200)
-    );
-  }),
+export const handlers = requireMockHandler
+  .keys()
+  .reduce((allHandlers, path) => {
+    const handlers = requireMockHandler(path).default;
 
-  rest.get("/api/user", (req, res, ctx) => {
-    // Check if the user is authenticated in this session
-    const isAuthenticated = sessionStorage.getItem("is-authenticated");
+    // map "./path/[to]/handlers.js" -> "/api/path/:to/handlers"
+    const apiPath =
+      "/api/" +
+      path
+        // trim "./" at start
+        .replace(/^\.\//, "")
+        // trim ".js" at end
+        .replace(/\.[^/.]+$/, "")
+        // replace "[param]" with ":param"
+        .replace(/\[([^/]*)\]/g, ":$1");
 
-    if (!isAuthenticated) {
-      // If not authenticated, respond with a 403 error
-      return res(
-        ctx.status(403),
-        ctx.json({
-          errorMessage: "Not authorized",
-        })
-      );
-    }
+    const pathHandlers = Object.getOwnPropertyNames(handlers).map((method) => {
+      const handler = handlers[method];
 
-    // If authenticated, return a mocked user details
-    return res(
-      ctx.status(200),
-      ctx.json({
-        username: "admin",
-      })
-    );
-  }),
-];
+      // for every method in handlers, register an msw handler
+      if (method in rest) {
+        return rest[method](apiPath, handler);
+      }
+
+      return undefined;
+    });
+
+    return [...allHandlers, ...pathHandlers];
+  }, []);
